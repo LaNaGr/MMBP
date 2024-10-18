@@ -181,28 +181,29 @@ class instance:
         self.file_path = paths
         self.batch_size = len(paths) if batch is None else batch
         tensors, num = to_tensor(paths, batch)
+        self.device = device
         self.num_jobs, self.num_mas, self.num_opes = num
 
         # dynamic feats
-        self.proc_times_batch = torch.stack(tensors[0], dim=0)          # shape: (batch_size, num_opes, num_mas)
-        self.ope_ma_adj_batch = torch.stack(tensors[1], dim=0).long()   # shape: (batch_size, num_opes, num_mas)
+        self.proc_times_batch = torch.stack(tensors[0], dim=0).to(device)          # shape: (batch_size, num_opes, num_mas)
+        self.ope_ma_adj_batch = torch.stack(tensors[1], dim=0).long().to(device)   # shape: (batch_size, num_opes, num_mas)
         # most important 2: ope_ma_adj_batch & pro_times_batch, 不变
 
         # for calculating the cumulative amount along the path of each job
-        self.cal_cumul_adj_batch = torch.stack(tensors[7], dim=0).float()   # shape: (batch_size, num_opes, num_opes)
+        self.cal_cumul_adj_batch = torch.stack(tensors[7], dim=0).float().to(device)   # shape: (batch_size, num_opes, num_opes)
 
         # static feats
-        self.ope_pre_adj_batch = torch.stack(tensors[2], dim=0)     # shape: (batch_size, num_opes, num_opes)
-        self.ope_sub_adj_batch = torch.stack(tensors[3], dim=0)     # shape: (batch_size, num_opes, num_opes)
+        self.ope_pre_adj_batch = torch.stack(tensors[2], dim=0).to(device)     # shape: (batch_size, num_opes, num_opes)
+        self.ope_sub_adj_batch = torch.stack(tensors[3], dim=0).to(device)     # shape: (batch_size, num_opes, num_opes)
 
         # the mapping between operations and jobs
-        self.opes_appertain_batch = torch.stack(tensors[4], dim=0).long()       # shape: (batch_size, num_opes)
+        self.opes_appertain_batch = torch.stack(tensors[4], dim=0).long().to(device)       # shape: (batch_size, num_opes)
 
         # the id of the first operation of each job
-        self.num_ope_biases_batch = torch.stack(tensors[5], dim=0).long()       # shape: (batch_size, num_jobs)
+        self.num_ope_biases_batch = torch.stack(tensors[5], dim=0).long().to(device)       # shape: (batch_size, num_jobs)
 
         # the number of operations for each job
-        self.nums_ope_batch = torch.stack(tensors[6], dim=0).long()             # shape: (batch_size, num_jobs)
+        self.nums_ope_batch = torch.stack(tensors[6], dim=0).long().to(device)             # shape: (batch_size, num_jobs)
 
         # the id of the last operation of each job
         self.end_ope_biases_batch = self.num_ope_biases_batch + self.nums_ope_batch - 1
@@ -223,7 +224,7 @@ class instance:
 
     def update_oma_pt_cca(self, mas, opes, last_opes, batch_idxes):
         # Removed unselected O-M arcs of the scheduled operations
-        remain_ope_ma_adj = torch.zeros(size=(self.batch_size, self.num_mas), dtype=torch.int64)
+        remain_ope_ma_adj = torch.zeros(size=(self.batch_size, self.num_mas), dtype=torch.int64, device=self.device)
         remain_ope_ma_adj[batch_idxes, mas] = 1
         self.ope_ma_adj_batch[batch_idxes, opes] = remain_ope_ma_adj[batch_idxes, :]
         self.proc_times_batch *= self.ope_ma_adj_batch

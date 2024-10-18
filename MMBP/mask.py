@@ -2,30 +2,32 @@ import torch
 
 
 class mask:
-    def __init__(self, batch_size, num_jobs, num_mas):
+    def __init__(self, batch_size, num_jobs, num_mas, device='cpu'):
         # Masks of current status, dynamic
+        self.device = device
         self.batch_size, self.num_jobs, self.num_mas = batch_size, num_jobs, num_mas
-        self.mask_job_release_batch = torch.full(size=(batch_size, num_jobs), dtype=torch.bool, fill_value=False)
-        self.mask_job_procing_batch = torch.full(size=(batch_size, num_jobs), dtype=torch.bool, fill_value=False)
-        self.mask_job_finish_batch = torch.full(size=(batch_size, num_jobs), dtype=torch.bool, fill_value=False)
-        self.mask_ma_procing_batch = torch.full(size=(batch_size, num_mas), dtype=torch.bool, fill_value=False)
-        self.mask_maintenance_ma_batch = torch.full(size=(batch_size, num_mas), dtype=torch.bool, fill_value=False)
+        self.mask_job_release_batch = torch.full(size=(batch_size, num_jobs), dtype=torch.bool, fill_value=False, device=device)
+        self.mask_job_procing_batch = torch.full(size=(batch_size, num_jobs), dtype=torch.bool, fill_value=False, device=device)
+        self.mask_job_finish_batch = torch.full(size=(batch_size, num_jobs), dtype=torch.bool, fill_value=False, device=device)
+        self.mask_ma_procing_batch = torch.full(size=(batch_size, num_mas), dtype=torch.bool, fill_value=False, device=device)
+        self.mask_maintenance_ma_batch = torch.full(size=(batch_size, num_mas), dtype=torch.bool, fill_value=False, device=device)
         # job maintenance直接东job proc
 
     def reset_self(self):
         # release
         self.mask_job_release_batch = torch.full(size=(self.batch_size, self.num_jobs), dtype=torch.bool,
-                                                 fill_value=False)
+                                                 fill_value=False, device=self.device)
         # mask for job, shape: (batch_size, num_jobs), True for jobs in process
         self.mask_job_procing_batch = torch.full(size=(self.batch_size, self.num_jobs), dtype=torch.bool,
-                                                 fill_value=False)
+                                                 fill_value=False, device=self.device)
         # mask for job, shape: (batch_size, num_jobs), True for completed jobs
         self.mask_job_finish_batch = torch.full(size=(self.batch_size, self.num_jobs), dtype=torch.bool,
-                                                fill_value=False)
+                                                fill_value=False, device=self.device)
         # mask for machine, shape: (batch_size, num_mas), True for machines in process
         self.mask_ma_procing_batch = torch.full(size=(self.batch_size, self.num_mas), dtype=torch.bool,
-                                                fill_value=False)
-        self.mask_maintenance_ma_batch = torch.full(size=(self.batch_size, self.num_mas), dtype=torch.bool, fill_value=False)
+                                                fill_value=False, device=self.device)
+        self.mask_maintenance_ma_batch = torch.full(size=(self.batch_size, self.num_mas), dtype=torch.bool,
+                                                    fill_value=False, device=self.device)
 
     def update_with_step(self, jobs, mas, ope_step_batch, end_ope_biases_batch, batch_idxes):
         self.mask_job_procing_batch[batch_idxes, jobs] = True

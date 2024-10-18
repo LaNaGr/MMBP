@@ -51,9 +51,9 @@ default_path = f'../MMBP/Data_G_FJSP_Version/{question}.fjs'
 if os.path.exists(default_path):
     pass
 else:
-    from from_mmbp_to_fjsp import record_fjsp_add
+    from from_mmbp_to_fjsp import record_f_version
 
-    record_fjsp_add(question)
+    record_f_version(question)
 
 rnd_info = f'../MMBP/Data_G_FJSP_Version_RnD/{question}.csv'
 rnd = pd.read_csv(rnd_info, index_col=[0, 1])  # release and due date

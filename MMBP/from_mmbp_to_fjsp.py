@@ -206,7 +206,7 @@ def remove_all_item_equal_2_sth_from_list(list_x, x):
     return list_x
 
 
-def from_mmbp_to_fjsp(recipes):
+def recipe_format_mod(recipes):
     num_recipe = len(recipes.chart1_df.index)   # fjsp_instance[0][0]
     num_stage = recipes.num_stage
     recipe_time = recipes.chart1_df
@@ -275,13 +275,13 @@ def from_mmbp_to_fjsp(recipes):
 
 
 # this is the final class
-class record_fjsp_add:
+class record_f_version:
     def __init__(self, x):
         """x is the name of primary file, e.g. x = 'p11' """
         self.name = x
         file = f"./MMBP/Data_G/{x}.txt"
         recipes = Read_Recipes(file)
-        self.fjsp = from_mmbp_to_fjsp(recipes)
+        self.fjsp = recipe_format_mod(recipes)
         self.recipe_date = recipes.chart3_df
         self.relation_unit_stage = recipes.chart2_df
         self.save_record()
@@ -304,10 +304,8 @@ class record_fjsp_add:
 
 
 if __name__ == '__main__':
-    """x = 'p15'
-    record_fjsp_add(x)"""
     x = 'i07'
-    record_fjsp_add(x)
+    record_f_version(x)
 
 
 

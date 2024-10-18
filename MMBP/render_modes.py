@@ -19,7 +19,8 @@ def write_json(data:dict, path:str):
 class Instance_for_render:
     def __init__(self, batch_size, file_name, num_jobs, num_mas, num_opes, nums_opes,
                  schedules_batch, opes_appertain_batch, num_ope_biases_batch, maintenance_info=None, name=None,
-                 color_type=plt.cm.tab20(np.linspace(0,1,50)), pic_settings=None, changeover_info=None):
+                 color_type=plt.cm.tab20(np.linspace(0,1,50)), pic_settings=None, changeover_info=None,
+                 format_p='svg'):
         """
         :param batch_size: int, number of instances
         :param file_name: str, name of the instance file
@@ -46,9 +47,10 @@ class Instance_for_render:
         self.folder = self.make_folder()
         self.maintenance_info = maintenance_info
         self.color_type = color_type
-        self.pic_settings = pic_settings if pic_settings is not None else {'machine_name': 'Machine', 'job_name': 'Job', 'operation_name': 'Operation'}
+        self.pic_settings = pic_settings if pic_settings is not None else {'machine_name': '', 'job_name': 'Order', 'operation_name': 'Operation'}
         self.changeover_info = changeover_info
         self.name = name
+        self.format_p = format_p
 
     def make_folder(self):
         # time_now = time.strftime('%Y%m%d_%H', time.localtime())
@@ -72,9 +74,9 @@ class Instance_for_render:
     def print_table(self):
         for batch_id in range(self.batch_size):
             schedules = self.schedules_batch[batch_id]
-            print(f"instance:{batch_id}")
+            # print(f"instance:{batch_id}")
             # df = pd.DataFrame(columns=["Machine", "Job", "Operation", "Start", "Finish"])
-            id_ope = torch.tensor(range(self.num_opes))
+            id_ope = torch.tensor(range(self.num_opes), device=schedules.device)
             idx_job, idx_ope = self.get_idx(id_ope, batch_id)
             id_machine = schedules[:, 1]
             end_time = schedules[:, 3]
@@ -101,14 +103,18 @@ class Instance_for_render:
             else:
                 if self.batch_size > 1:
                     if isinstance(self.file_name, list):
-                        df.to_csv(self.folder + '/' + self.name + f"b{batch_id}_{self.name}.csv", sep=",",
+                        os.makedirs(self.folder + '/' + self.name[0], exist_ok=True)
+                        df.to_csv(self.folder + '/' + self.name[0] + '/' + f"{self.name[1]}.csv", sep=",",
                                   index=False, header=True)
                     else:
-                        df.to_csv(self.folder + '/' + self.name + f"b{batch_id}_{self.name}.csv", sep=",", index=False,
+                        os.makedirs(self.folder + '/' + self.name[0], exist_ok=True)
+                        df.to_csv(self.folder + '/' + self.name[0] + '/' + f"{self.name[1]}.csv", sep=",", index=False,
                                   header=True)
                 else:
-                    df.to_csv(self.folder + '/' + self.name + f"b{batch_id}_{self.name}.csv", sep=",", index=False,
+                    os.makedirs(self.folder + '/' + self.name[0], exist_ok=True)
+                    df.to_csv(self.folder + '/' + self.name[0] + '/' + f"{self.name[1]}.csv", sep=",", index=False,
                                 header=True)
+            del df
 
     def draw(self):
         num_jobs = self.num_jobs
@@ -157,7 +163,7 @@ class Instance_for_render:
             # axes.set_title('FJSP Schedule')
             axes.grid(linestyle='-.', color='black', alpha=0.1)
             axes.set_xlabel('Time / h', fontsize=font_size+1)
-            axes.set_ylabel(self.pic_settings['machine_name'], fontsize=font_size+1)
+            axes.set_ylabel('Unit', fontsize=font_size+1)
             axes.set_yticks(y_ticks_loc, y_ticks, fontsize=font_size)
             axes.legend(handles=patches, ncol=1, # bbox_to_anchor=(1.01, 1.0),
                         prop={'size': font_size})  # , fontsize=int(14 / pow(1, 0.3))
@@ -206,20 +212,24 @@ class Instance_for_render:
             if self.name is None:
                 if self.batch_size > 1:
                     if isinstance(self.file_name,list):
-                        plt.savefig(self.folder + '/' + self.file_name[batch_id][-6:-4] + f"b{batch_id}_{already_schedule}.png")
+                        plt.savefig(self.folder + '/' + self.file_name[batch_id][-6:-4] +'/'+ f"b{batch_id}_{already_schedule}."+self.format_p,format=self.format_p)
                     else:
-                        plt.savefig(self.folder + '/' + self.file_name[-6:-4] + f"b{batch_id}_{already_schedule}.png")
+                        plt.savefig(self.folder + '/' + self.file_name[-6:-4] +'/'+ f"b{batch_id}_{already_schedule}."+self.format_p,format=self.format_p)
                 else:
-                    plt.savefig(self.folder + '/' + self.file_name[-6:-4] + f"b{batch_id}_{already_schedule}.png")
+                    plt.savefig(self.folder + '/' + self.file_name[-6:-4] +'/'+ f"b{batch_id}_{already_schedule}."+self.format_p,format=self.format_p)
             else:
+                ms=self.schedules_batch[:,:,3].max().item()
+                print(f"makespan:{ms}, batch_id:{batch_id}, name:{self.name[0]}_{self.name[1]}")
+                axes.set_title(self.name[0]+"    MS="+str(round(ms, 3)))
                 if self.batch_size > 1:
                     if isinstance(self.file_name, list):
-                        plt.savefig(self.folder + '/' + self.name + f"b{batch_id}_{self.name}_{already_schedule}.png")
+                        plt.savefig(self.folder + '/' + self.name[0] +'/'+ f"{self.name[1]}_{already_schedule}"+self.format_p,format=self.format_p)
                     else:
-                        plt.savefig(self.folder + '/' + self.name + f"b{batch_id}_{self.name}_{already_schedule}.png")
+                        plt.savefig(self.folder + '/' + self.name[0] +'/'+ f"{self.name[1]}_{already_schedule}."+self.format_p,format=self.format_p)
                 else:
-                    plt.savefig(self.folder + '/' + self.name + f"b{batch_id}_{self.name}_{already_schedule}.png")
+                    plt.savefig(self.folder + '/' + self.name[0]+'/' + f"{self.name[1]}_{already_schedule}."+self.format_p,format=self.format_p)
             plt.xlim(0)
             # plt.show()
             plt.clf()
         plt.close('all')
+        del fig

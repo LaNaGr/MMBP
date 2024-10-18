@@ -7,7 +7,7 @@ import copy
 # feat_ope dim=8, feat_ma dim=3
 ###########################################################
 class feature:
-    def __init__(self, instances):
+    def __init__(self, instances, device='cpu'):
         """
         features, dynamic
             ope:
@@ -40,8 +40,8 @@ class feature:
         opes_appertain_batch = self.instance.opes_appertain_batch
 
         # Generate raw feature vectors
-        feat_opes_batch = torch.zeros(size=(batch_size, self.feat_paras["ope_feat_dim"], num_opes))
-        feat_mas_batch = torch.zeros(size=(batch_size, self.feat_paras["ma_feat_dim"], num_mas))
+        feat_opes_batch = torch.zeros(size=(batch_size, self.feat_paras["ope_feat_dim"], num_opes), device=device)
+        feat_mas_batch = torch.zeros(size=(batch_size, self.feat_paras["ma_feat_dim"], num_mas), device=device)
 
         feat_opes_batch[:, 1, :] = torch.count_nonzero(ope_ma_adj_batch, dim=2)
         feat_opes_batch[:, 2, :] = torch.sum(proc_times_batch, dim=2).div(feat_opes_batch[:, 1, :] + 1e-9)
@@ -77,8 +77,8 @@ class feature:
     def update_fob_0123(self, opes, proc_times, start_ope, end_ope, batch_idxes):
         # Update for some O-M arcs are removed, such as 'Status', 'Number of neighboring machines' and 'Processing time'
         self.feat_opes_batch[batch_idxes, :3, opes] = torch.stack(
-            (torch.ones(batch_idxes.size(0), dtype=torch.float),
-             torch.ones(batch_idxes.size(0), dtype=torch.float),
+            (torch.ones(batch_idxes.size(0), dtype=torch.float, device=proc_times.device),
+             torch.ones(batch_idxes.size(0), dtype=torch.float, device=proc_times.device),
              proc_times), dim=1)
         # Update 'Number of unscheduled operations in the job'
         for i in range(batch_idxes.size(0)):

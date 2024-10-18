@@ -48,7 +48,7 @@ def get_action_prob(state):
 
 
 def random_method(eligible_matrix, ope_step_batch, batch_idxes):
-    rand_matrix = torch.rand(eligible_matrix.size())
+    rand_matrix = torch.rand(eligible_matrix.size(), device=eligible_matrix.device)
     mul = rand_matrix * eligible_matrix
     point = mul.flatten(1).argmax(dim=1)
     mas = (point % eligible_matrix.size(2)).long()
@@ -64,7 +64,7 @@ def FIFO(env):
     if env.release is not None:
         release_time = env.release
     else:
-        release_time = torch.zeros(size=(env.instance.num_jobs,))
+        release_time = torch.zeros(size=(env.instance.num_jobs,), device=env.device)
     sorted_indice = torch.argsort(release_time)
     for i in sorted_indice:
         if ~bools[i]:
@@ -78,7 +78,7 @@ def MOPNR(env):
     size = env.instance.num_jobs
     next_opes = env.schedule.ope_step_batch
     bools = env.mask.mask_job_finish_batch[0] # +~env.mask.mask_job_release_batch[0]
-    sum_pj_mean_for_Ji = torch.ones(size=(size,))
+    sum_pj_mean_for_Ji = torch.ones(size=(size,), device=env.device)
     sum_pj_mean_for_Ji[bools] = 0
     sum_pj_mean_for_Ji[~bools] = env.feature.feat_opes_batch[0, 3, next_opes[0][~bools]]
     nums, idx_sort_descending = torch.sort(sum_pj_mean_for_Ji, dim=-1, descending=True, stable=False)
@@ -108,7 +108,7 @@ def LWRM(env):
     size = env.instance.num_jobs
     next_opes = env.schedule.ope_step_batch
     bools = env.mask.mask_job_finish_batch[0]
-    work_remaining_time = torch.zeros(size=(size,))
+    work_remaining_time = torch.zeros(size=(size,), device=env.device)
     work_remaining_time[~bools] = env.feature.feat_opes_batch[0, 4, next_opes[0][~bools]] - env.schedule.schedules_batch[0, next_opes[0][~bools], 2] # i.e. unschduled ope's ST
     work_remaining_time[bools] = torch.inf
     ts, idxs = torch.sort(work_remaining_time)
@@ -123,7 +123,7 @@ def MWRM(env):
     size = env.instance.num_jobs
     next_opes = env.schedule.ope_step_batch
     bools = env.mask.mask_job_finish_batch[0]
-    work_remaining_time = torch.zeros(size=(size,))
+    work_remaining_time = torch.zeros(size=(size,), device=env.device)
     work_remaining_time[~bools] = env.feature.feat_opes_batch[0, 4, next_opes[0][~bools]] - \
                                   env.schedule.schedules_batch[0, next_opes[0][~bools], 2]  # i.e. unschduled ope's ST
     work_remaining_time[bools] = torch.inf
@@ -200,47 +200,47 @@ class Heuristic():
         #job = env.instance.opes_appertain_batch[0, action_o]
         action_m_list = EET(env)
         m = choose_m(action_o, env, action_m_list)
-        return torch.tensor([[action_o], [m], [job]])
+        return torch.tensor([[action_o], [m], [job]], device=env.device)
 
     def FIFO_SPT(self, env):
         action_o, job = FIFO(env)
         m = SPT(env, action_o)
-        return torch.tensor([[action_o], [m], [job]])
+        return torch.tensor([[action_o], [m], [job]], device=env.device)
 
     def MOPNR_EET(self, env):
         action_o, job = MOPNR(env)
         #job = env.instance.opes_appertain_batch[0, action_o]
         action_m_list = EET(env)
         m = choose_m(action_o, env, action_m_list)
-        return torch.tensor([[action_o], [m], [job]])
+        return torch.tensor([[action_o], [m], [job]], device=env.device)
 
     def MOPNR_SPT(self, env):
         action_o, job = MOPNR(env)
         m = SPT(env, action_o)
-        return torch.tensor([[action_o], [m], [job]])
+        return torch.tensor([[action_o], [m], [job]], device=env.device)
 
     def LWRM_EET(self, env):
         action_o, job = LWRM(env)
         action_m_list = EET(env)
         m = choose_m(action_o, env, action_m_list)
-        return torch.tensor([[action_o], [m], [job]])
+        return torch.tensor([[action_o], [m], [job]], device=env.device)
 
     def LWRM_SPT(self, env):
         action_o, job = LWRM(env)
         m = SPT(env, action_o)
-        return torch.tensor([[action_o], [m], [job]])
+        return torch.tensor([[action_o], [m], [job]], device=env.device)
 
     def MWRM_EET(self, env):
         action_o, job = MWRM(env)
         action_m_list = EET(env)
         m = choose_m(action_o, env, action_m_list)
-        return torch.tensor([[action_o], [m], [job]])
+        return torch.tensor([[action_o], [m], [job]], device=env.device)
 
     def MWRM_SPT(self, env):
         action_o, job = MWRM(env)
         action_m_list = SPT(env, action_o)
         m = choose_m(action_o, env, action_m_list)
-        return torch.tensor([[action_o], [m], [job]])
+        return torch.tensor([[action_o], [m], [job]], device=env.device)
 
 
 if __name__ == "__main__":
@@ -262,8 +262,8 @@ if __name__ == "__main__":
         pass
     else:
         """
-    from from_mmbp_to_fjsp import record_fjsp_add
-    record_fjsp_add(question)
+    from from_mmbp_to_fjsp import record_f_version
+    record_f_version(question)
 
     rnd_info = f'../MMBP/Data_G_FJSP_Version_RnD/{question}.csv'
     rnd = pd.read_csv(rnd_info, index_col=[0, 1])  # release and due date
