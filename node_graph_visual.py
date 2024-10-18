@@ -294,7 +294,7 @@ class draw_graph:
         vis = cv2.cvtColor(vis, cv2.COLOR_RGB2BGR)
         cv2.imshow(window_title, vis)
         # https://stackoverflow.com/questions/64061721/opencv-to-close-the-window-on-a-specific-key
-        cv2.imwrite(path + str(number) + '.jpg', vis)
+        cv2.imwrite(path + str(number) + '.tiff', vis)
         k = cv2.waitKey(wait) & 0xFF
         if k == 27:  # wait for ESC key to exit
             cv2.destroyAllWindows()
@@ -336,7 +336,7 @@ class draw_graph:
 
     @staticmethod
     def draw_env_nodes(env, path, method, dpi=100, width=10, height=6, wait=1):
-        """画图"""
+        """画图, 所有中间步骤"""
         # 1. 原始环境
         GG = draw_graph(env, dpi=dpi, width=width, height=height)
         GG.graph_widow_primary(path=path, wait=wait)
@@ -347,7 +347,7 @@ class draw_graph:
             # 在graph window middle 执行action
             GG.graph_window_middle(action, path=path, number=i, wait=wait)
 
-        env.render(changeable_mode='p_d')
+        # env.render(changeable_mode='p_d')
 
 
 def example_random(env, method, step_output=1):
@@ -372,16 +372,13 @@ def example_random(env, method, step_output=1):
 
 if __name__ == "__main__":
     # 测试效果
-    need_save = False
+    name_save = 'case_studyA'
     import os
     import time
 
     local_time = time.strftime("%Y%m%d_%H_%M")
 
-    if need_save:
-        fold_path = "./" + local_time + './'
-    else:
-        fold_path = './default_fold_pic/'
+    fold_path = "./result/" + name_save + local_time + '/'
 
     if not os.path.exists(fold_path):
         os.mkdir(fold_path)

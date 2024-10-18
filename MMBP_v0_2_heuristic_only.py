@@ -1,5 +1,4 @@
 # No changeover time
-# No release and due date settings
 # Have maintenance window
 
 import time
@@ -10,8 +9,8 @@ import torch
 import copy
 from MMBP.load_data_for_mmbp import instance
 from MMBP.feat_ver_2 import feature
-from MMBP.mask import mask
-from MMBP.load_data_for_heu import schedule
+#from MMBP.mask import mask
+from MMBP.load_data_for_heu import schedule, mask
 from MMBP.state_makespan import EnvState
 from MMBP.render_modes import Instance_for_render
 import pandas as pd
@@ -23,7 +22,7 @@ PIC_SETTINGS = {'machine_name': '', 'job_name': 'Order', 'operation_name': 'Stag
 class MMBPEnv_Heu(gym.Env):
     """
     Flexible Job Shop Scheduling Problems
-    Environment
+    Environmenttale
     PATH: ['','',...] OR ''
     batch: None OR 1
     device: 'cpu','cuda'
@@ -89,9 +88,9 @@ class MMBPEnv_Heu(gym.Env):
 
     def make_folder(self, path):
         if self.instance.batch_size == 1:
-            folder_path = "./table/" + os.path.basename(path)[0:-4]  # time_now
+            folder_path = "./result/" + os.path.basename(path)[0:-4]  # time_now
         else:
-            folder_path = "./table/" + os.path.basename(path[0])[0:-4]
+            folder_path = "./result/" + os.path.basename(path[0])[0:-4]
         if self.render_mode in ['p_d', 'draw', 'print_table']:
             if not os.path.exists(folder_path):
                 os.makedirs(folder_path)
@@ -377,11 +376,10 @@ class MMBPEnv_Heu(gym.Env):
             proc_time = proc_time_batch[k]
             for i in range(self.instance.num_mas):
                 ma_gantt[i].sort(key=lambda s: s[1])
-                for j in range(len(ma_gantt[i])):  # j: 每个机器所作O的数量
+                for j in range(len(ma_gantt[i])):  # j: num ope
                     if (len(ma_gantt[i]) <= 1) or (j == len(ma_gantt[i]) - 1):
                         break
-                    if 0 > (ma_gantt[i][j][2] - ma_gantt[i][j + 1][1]) > -1e-4 or ma_gantt[i][j][2] > \
-                            ma_gantt[i][j + 1][1]:  # 机器上某操作的完毕时间窗小于下一个开始
+                    if (ma_gantt[i][j][2] - ma_gantt[i][j + 1][1])>1e-3 :  # last_finish should be smaller than next_start
                         flag_ma_overlap += 1
                         print(f"Overlap:【machine{i}】【batch{k}】,"
                               f"【ope{ma_gantt[i][j][0]}】 time {ma_gantt[i][j][1]}-{ma_gantt[i][j][2]} while"
@@ -427,7 +425,7 @@ class MMBPEnv_Heu(gym.Env):
 
 
 class main_information():
-    def __init__(self, mt):
+    def __init__(self, mt, device="cpu"):
         # e.g. [[m_id, start, end], [m_id, start, end]]
         if mt is not None:
             self.if_maintenance = True

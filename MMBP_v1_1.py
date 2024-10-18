@@ -3,8 +3,8 @@
 #   Rule_1 Machine offline and ongoing operation is paused (continue after maintenance)
 #   Rule_2 The operation that is not started will be postponed to the end of the maintenance
 #   Rule_3 The operation that is ongoing will be paused and continued after maintenance
-#   Rule_4 The operation that is close to end (<= timeslot) will not be stopped, the maintenance will be postponed
-
+#   Rule_4 The operation that is close to end (<= timeslot) will not be stopped, the maintenance will be postponed (!!!!!!!!!!!!!!! important)
+import gc
 import os
 import gym
 import copy
@@ -83,22 +83,23 @@ class MMBPEnv(gym.Env):
         self.done = False
         # build the instance, feature, mask, schedule, state, old_state
         ins = instance(ins_file, batch=batch, device=device)
-        feat = feature(ins)
-        mask_at_this_time = mask(batch_size=ins.batch_size, num_jobs=ins.num_jobs, num_mas=ins.num_mas)
+        feat = feature(ins, device=device)
+        mask_at_this_time = mask(batch_size=ins.batch_size, num_jobs=ins.num_jobs, num_mas=ins.num_mas, device=device)
         schedule_result = schedule(batch_size=ins.batch_size, num_opes=ins.num_opes, num_mas=ins.num_mas,
                                    num_ope_biases_batch=ins.num_ope_biases_batch, feat_opes_batch=feat.feat_opes_batch,
-                                   mask_job_finish_batch=mask_at_this_time.mask_job_finish_batch)
+                                   mask_job_finish_batch=mask_at_this_time.mask_job_finish_batch,
+                                   device=device)
         self.instance = ins
         self.feature = feat
         self.mask = mask_at_this_time
         self.schedule = schedule_result
         # maintenance time window
-        self.main_info = maintenance_information(maintenance, batch_size=ins.batch_size) if maintenance is not None else None
+        self.main_info = maintenance_information(maintenance, batch_size=ins.batch_size, device=device) if maintenance is not None else None
         # update feat and mask because of due
         # Can be used after initialization of env
         self.if_rnd = False if release_and_due is None else True
         if self.if_rnd:
-            self.set_release_and_due_of_job(release_and_due)
+            self.set_release_and_due_of_job(release_and_due, device=device)
             if_no_eligible = self.if_no_eligible()  # 可能无已释放
             if 0 in if_no_eligible:
                 self.time_move()
@@ -143,9 +144,9 @@ class MMBPEnv(gym.Env):
 
     def update_main_info(self, mt):
         """sometimes the main info will be added after the env is created, so we need to update it."""
-        self.main_info = maintenance_information(mt, batch_size=self.instance.batch_size)
+        self.main_info = maintenance_information(mt, batch_size=self.instance.batch_size, device=self.device)
 
-    def set_release_and_due_of_job(self, release_and_due, in_proc=False):
+    def set_release_and_due_of_job(self, release_and_due, in_proc=False, device='cpu'):
         """record release idx but don't change seq, keeping the initial sequence of r & d.
         release_and_due: pd.DataFrame, size = (num_jobs, 2) or numpy.array
         """
@@ -153,7 +154,7 @@ class MMBPEnv(gym.Env):
             release_and_due = pd.read_csv(release_and_due, header=None, index_col=None)
         if isinstance(release_and_due, pd.DataFrame):
             release_and_due = release_and_due.to_numpy()
-        release_and_due = torch.Tensor(release_and_due)
+        release_and_due = torch.tensor(release_and_due, device=device)
         release = release_and_due[:, 0]
         due = release_and_due[:, 1]
         release_seq, idx = release.sort()
@@ -199,9 +200,9 @@ class MMBPEnv(gym.Env):
         """make a folder to save charts and pictures"""
         # time_now = time.strftime('%Y%m%d_%H', time.localtime())
         if ins_batch == 1:
-            folder_path = "./table/" + os.path.basename(path)[0:-4]  # time_now
+            folder_path = "./result/" + os.path.basename(path)[0:-4]  # time_now
         else:
-            folder_path = "./table/" + os.path.basename(path[0])[0:-4]
+            folder_path = "./result/" + os.path.basename(path[0])[0:-4]
         if self.render_mode in ['p_d', 'draw', 'print_table']:
             if not os.path.exists(folder_path):
                 os.makedirs(folder_path)
@@ -221,9 +222,12 @@ class MMBPEnv(gym.Env):
                                                  batch_size=self.instance.batch_size) if self.main_info is not None else None
         self.mask.reset_self()
         self.eli = self.cal_eli()
+
+        torch.cuda.memory_summary()
+        torch.cuda.empty_cache()
         return self.state
 
-    def render(self, changeable_mode=None, name=None):
+    def render(self, changeable_mode=None, name=None, selected_batch=None):
         """
         3 modes
             "human": (default) print schedules_batch
@@ -238,25 +242,53 @@ class MMBPEnv(gym.Env):
                 print(self.schedule.schedules_batch[i, :, :])
         else:
             # this 'ins' is in render_modes, but not load_data
-            if name is None:
-                ins = Instance_for_render(batch_size=self.instance.batch_size, file_name=self.instance.file_path,
-                                          num_jobs=self.instance.num_jobs, num_mas=self.instance.num_mas,
-                                          num_opes=self.instance.num_opes, nums_opes=self.instance.nums_opes,
-                                          schedules_batch=self.schedule.schedules_batch,
-                                          opes_appertain_batch=self.instance.opes_appertain_batch,
-                                          num_ope_biases_batch=self.instance.num_ope_biases_batch,
-                                          maintenance_info=self.main_info.maintenance,
-                                          color_type=self.color_type, pic_settings=self.pic_settings, )
+            # CHECK VALIDATION
+
+
+            # selected_batch: select one batch to show
+            if selected_batch is None:
+                bools, _ = self.validate_gantt()
+                size_true = bools.sum()
+                if name is None:
+                    ins = Instance_for_render(batch_size=size_true, file_name=self.instance.file_path,
+                                              num_jobs=self.instance.num_jobs, num_mas=self.instance.num_mas,
+                                              num_opes=self.instance.num_opes, nums_opes=self.instance.nums_opes,
+                                              schedules_batch=self.schedule.schedules_batch[bools],
+                                              opes_appertain_batch=self.instance.opes_appertain_batch[bools],
+                                              num_ope_biases_batch=self.instance.num_ope_biases_batch[bools],
+                                              maintenance_info=self.main_info.maintenance,
+                                              color_type=self.color_type, pic_settings=self.pic_settings, )
+                else:
+                    ins = Instance_for_render(batch_size=size_true, file_name=self.instance.file_path,
+                                              num_jobs=self.instance.num_jobs, num_mas=self.instance.num_mas,
+                                              num_opes=self.instance.num_opes, nums_opes=self.instance.nums_opes,
+                                              schedules_batch=self.schedule.schedules_batch[bools],
+                                              opes_appertain_batch=self.instance.opes_appertain_batch[bools],
+                                              num_ope_biases_batch=self.instance.num_ope_biases_batch[bools],
+                                              maintenance_info=self.main_info.maintenance,
+                                              color_type=self.color_type, pic_settings=self.pic_settings,
+                                              name=name)
             else:
-                ins = Instance_for_render(batch_size=self.instance.batch_size, file_name=self.instance.file_path,
-                                          num_jobs=self.instance.num_jobs, num_mas=self.instance.num_mas,
-                                          num_opes=self.instance.num_opes, nums_opes=self.instance.nums_opes,
-                                          schedules_batch=self.schedule.schedules_batch,
-                                          opes_appertain_batch=self.instance.opes_appertain_batch,
-                                          num_ope_biases_batch=self.instance.num_ope_biases_batch,
-                                          maintenance_info=self.main_info.maintenance,
-                                          color_type=self.color_type, pic_settings=self.pic_settings,
-                                          name=name)
+                if name is None:
+                    ins = Instance_for_render(batch_size=1, file_name=self.instance.file_path,
+                                              num_jobs=self.instance.num_jobs, num_mas=self.instance.num_mas,
+                                              num_opes=self.instance.num_opes, nums_opes=self.instance.nums_opes,
+                                              schedules_batch=self.schedule.schedules_batch[selected_batch, :, :][None,:,:],
+                                              opes_appertain_batch=self.instance.opes_appertain_batch[selected_batch, :][None,:],
+                                              num_ope_biases_batch=self.instance.num_ope_biases_batch[selected_batch, :][None,:],
+                                              maintenance_info=self.main_info.maintenance,
+                                              color_type=self.color_type, pic_settings=self.pic_settings, )
+                else:
+                    ins = Instance_for_render(batch_size=1, file_name=self.instance.file_path,
+                                              num_jobs=self.instance.num_jobs, num_mas=self.instance.num_mas,
+                                              num_opes=self.instance.num_opes, nums_opes=self.instance.nums_opes,
+                                              schedules_batch=self.schedule.schedules_batch[selected_batch, :, :][None,:,:],
+                                              opes_appertain_batch=self.instance.opes_appertain_batch[selected_batch, :][None,:],
+                                              num_ope_biases_batch=self.instance.num_ope_biases_batch[selected_batch, :][None,:],
+                                              maintenance_info=self.main_info.maintenance,
+                                              color_type=self.color_type, pic_settings=self.pic_settings,
+                                              name=name)
+
             if self.color_type is not None:
                 ins.color_type = self.color_type
             if mode == 'p_d':
@@ -271,9 +303,6 @@ class MMBPEnv(gym.Env):
 
     def step(self, actions):
         """
-        There are many mid_step parts are changing schedule clock,
-            which are highlighted by ########### 'time_move'
-
         actions: sample:[[Ope],[Mas],[Job]]
 
         env step to next state
@@ -340,6 +369,10 @@ class MMBPEnv(gym.Env):
         # maintenance cause mask, mask after time point changed
         # Actually, it is an optinoal part before each action
         if self.main_info is not None:
+            '''
+            There are many mid_step parts are changing schedule clock,
+            which are highlighted by ########### 'time_move'
+            '''
             # in this part, m_times should be updated with schedule.time, if the clock has already moved after m_time
             while self.main_info.bool_whether_start(self.schedule.machines_batch[:,:,1]).any():
                 ########### 'time_move'
@@ -426,114 +459,84 @@ class MMBPEnv(gym.Env):
             # whether walk through main, find start main point
             bool_start = self.main_info.bool_whether_start(m_time)
             if bool_start.any():
-                batch_id_seq_to_main, m_id, t_1, t_2 = self.main_info.s_need(bool_start)
-                m_id = m_id.long()
-                batch_id_seq_to_main = batch_id_seq_to_main.long()
-                self.mask.mask_maintenance_ma_batch[batch_id_seq_to_main, m_id] = True
+                i, m_id, t_1, t_2 = self.main_info.s_need(bool_start)
+                self.mask.mask_maintenance_ma_batch[i, m_id] = True
                 # make stuck job record
-                m_available_time = self.schedule.machines_batch[batch_id_seq_to_main, m_id, 1]
+                m_available_time = self.schedule.machines_batch[i, m_id, 1]
                 t = t_2 - t_1
-                working_job = self.schedule.machines_batch[batch_id_seq_to_main, m_id, 3].long()
-
-                # Rule_4 for Maintenance -- make self.already_maintenance different from self.main_info.maintenance
-                bool_job_stuck = m_available_time - t_1 > self.time_slot    # Rule_4 of maintenance
-
+                working_job = self.schedule.machines_batch[i, m_id, 3].long()
+                bool_job_stuck = m_available_time > t_1
                 if bool_job_stuck.any():
-                    # J not release / working ope, arrange job. Else, mask machine
-                    working_ope = (self.schedule.ope_step_batch[batch_id_seq_to_main, working_job] - 1).long()
-                    # next step of ope_step_batch，so -1
-                    self.schedule.stuck_job[batch_id_seq_to_main, m_id] = working_job
-                    self.schedule.stuck_time[batch_id_seq_to_main, m_id] = self.schedule.machines_batch[batch_id_seq_to_main, m_id, 1] - t_1
-
-                    ##################### Problem 1
-                    ##################### Main before ongoing Action
-                    where_current_action_conflict = self.watching[2, batch_id_seq_to_main] == working_job
-
-                    # current action is conflicting with maintenance
-                    # Main before Action -- change start time of Action
-                    batch_affected = t_1 <= self.schedule.schedules_batch[batch_id_seq_to_main, working_ope, 2]
-                    use_id = batch_id_seq_to_main[where_current_action_conflict & batch_affected]
-                    if use_id.any():
-                        # use_id for Main before Action
-                        dur = self.schedule.schedules_batch[use_id, working_ope, 3] - self.schedule.schedules_batch[use_id, working_ope, 2]
-                        t = t_2 + dur - m_available_time
-                        self.schedule.machines_batch[use_id, m_id, 1] = t_2 + dur
-                        # self.feature.feat_opes_batch[i, 2, working_ope] don't need to change now
-                        neighbor_ope_till_end_this_job = self.instance.end_ope_biases_batch[use_id, working_job]
-                        self.feature.feat_opes_batch[use_id, 4, working_ope: neighbor_ope_till_end_this_job + 1] += t  # fob end time
-                        self.feature.feat_opes_batch[use_id, 5, working_ope: neighbor_ope_till_end_this_job + 1] += t  # fob start time
-                        # schedule s_batch
-                        self.schedule.schedules_batch[use_id,
-                        working_ope:neighbor_ope_till_end_this_job + 1, 2] += t
-                        self.schedule.schedules_batch[use_id,
-                        working_ope:neighbor_ope_till_end_this_job + 1, 3] += t
-                    # Main after Action won't change the start time of Action
+                    # 若还未释放job, 即working ope未完成，需要整体移动job安排；否则，只mask machine
+                    working_ope = (self.schedule.ope_step_batch[i, working_job] - 1).long()
+                    # 不是ope_step_batch，这个是下一步，应-1
+                    self.schedule.stuck_job[i, m_id] = working_job
+                    self.schedule.stuck_time[i, m_id] = self.schedule.machines_batch[
+                                                            i, m_id, 1] - t_1
+                    self.schedule.machines_batch[i, m_id, 1] += t  # fake proc time of Ope
+                    # the similar process as do an action
+                    self.feature.feat_opes_batch[i, 2, working_ope] += t  # update fob_2 proc time
+                    # influence fob of same job
+                    neighbor_ope_till_end_this_job = self.instance.end_ope_biases_batch[i, working_job]
+                    """if working_ope.size() is not torch.Size([1])"""
+                    # only integer tensors of a single element can be converted to an index
+                    if bool_job_stuck.shape[0] != 1:
+                        for slice_idx in range(i.shape[0]):
+                            # attention: mask_job_proc
+                            # self.mask.mask_job_procing_batch[slice_idx, working_job[slice_idx]] = True
+                            self.feature.feat_opes_batch[i[slice_idx], 4,
+                            working_ope[slice_idx]:neighbor_ope_till_end_this_job[slice_idx] + 1] += t[
+                                slice_idx]  # fob end time
+                            self.feature.feat_opes_batch[i[slice_idx], 5,
+                            working_ope[slice_idx] + 1:neighbor_ope_till_end_this_job[slice_idx] + 1] += t[
+                                slice_idx]  # fob start time
+                            # Update partial schedule (state), m_batch has already changed
+                            self.schedule.schedules_batch[i[slice_idx], working_ope[slice_idx], 3] += t[slice_idx]
+                            self.schedule.schedules_batch[i[slice_idx],
+                            working_ope[slice_idx] + 1:neighbor_ope_till_end_this_job[slice_idx] + 1, 2] += t[slice_idx]
+                            self.schedule.schedules_batch[i[slice_idx],
+                            working_ope[slice_idx] + 1:neighbor_ope_till_end_this_job[slice_idx] + 1, 3] += t[slice_idx]
                     else:
-                        self.schedule.machines_batch[batch_id_seq_to_main, m_id, 1] += t  # fake proc time of Ope
-                        # the similar process as do an action
-                        self.feature.feat_opes_batch[batch_id_seq_to_main, 2, working_ope] += t  # update fob_2 proc time
-                        # influence fob of same job
-                        neighbor_ope_till_end_this_job = self.instance.end_ope_biases_batch[batch_id_seq_to_main, working_job]
-                        """if working_ope.size() is not torch.Size([1])"""
-                        # only integer tensors of a single element can be converted to an index
-                        if bool_job_stuck.shape[0] != 1:
-                            for slice_idx in range(batch_id_seq_to_main.shape[0]):
-                                # attention: mask_job_proc
-                                # self.mask.mask_job_procing_batch[slice_idx, working_job[slice_idx]] = True
-                                self.feature.feat_opes_batch[batch_id_seq_to_main[slice_idx], 4,
-                                working_ope[slice_idx]:neighbor_ope_till_end_this_job[slice_idx] + 1] += t[
-                                    slice_idx]  # fob end time
-                                self.feature.feat_opes_batch[batch_id_seq_to_main[slice_idx], 5,
-                                working_ope[slice_idx] + 1:neighbor_ope_till_end_this_job[slice_idx] + 1] += t[
-                                    slice_idx]  # fob start time
-                                # Update partial schedule (state), m_batch has already changed
-                                self.schedule.schedules_batch[batch_id_seq_to_main[slice_idx], working_ope[slice_idx], 3] += t[slice_idx]
-                                self.schedule.schedules_batch[batch_id_seq_to_main[slice_idx],working_ope[slice_idx] + 1:neighbor_ope_till_end_this_job[slice_idx] + 1, 2] \
-                                    += t[slice_idx]
-                                self.schedule.schedules_batch[batch_id_seq_to_main[slice_idx],working_ope[slice_idx] + 1:neighbor_ope_till_end_this_job[slice_idx] + 1, 3] \
-                                    += t[slice_idx]
-                        else:
-                            self.feature.feat_opes_batch[batch_id_seq_to_main, 4,
-                            working_ope: neighbor_ope_till_end_this_job + 1] += t  # fob end time
-                            self.feature.feat_opes_batch[batch_id_seq_to_main, 5,
-                            working_ope + 1: neighbor_ope_till_end_this_job + 1] += t  # fob start time
-                            # schedule s_batch
-                            self.schedule.schedules_batch[batch_id_seq_to_main, working_ope, 3] += t
-                            self.schedule.schedules_batch[batch_id_seq_to_main,
-                            working_ope + 1:neighbor_ope_till_end_this_job + 1, 2] += t
-                            self.schedule.schedules_batch[batch_id_seq_to_main,
-                            working_ope + 1:neighbor_ope_till_end_this_job + 1, 3] += t
+                        self.feature.feat_opes_batch[i, 4,
+                        working_ope: neighbor_ope_till_end_this_job + 1] += t  # fob end time
+                        self.feature.feat_opes_batch[i, 5,
+                        working_ope + 1: neighbor_ope_till_end_this_job + 1] += t  # fob start time
+                        # schedule s_batch
+                        self.schedule.schedules_batch[i, working_ope, 3] += t
+                        self.schedule.schedules_batch[i,
+                        working_ope + 1:neighbor_ope_till_end_this_job + 1, 2] += t
+                        self.schedule.schedules_batch[i,
+                        working_ope + 1:neighbor_ope_till_end_this_job + 1, 3] += t
 
                     # Update feature vectors of machines, available time & utiliz
-                    self.feature.feat_mas_batch[batch_id_seq_to_main, 1, m_id] = self.schedule.machines_batch[
-                        batch_id_seq_to_main, m_id, 1]
-                    utiliz = self.schedule.machines_batch[batch_id_seq_to_main, :, 2]
-                    cur_time = self.schedule.time[batch_id_seq_to_main, None].expand_as(utiliz)
+                    self.feature.feat_mas_batch[i, 1, m_id] = self.schedule.machines_batch[
+                        i, m_id, 1]
+                    utiliz = self.schedule.machines_batch[i, :, 2]
+                    cur_time = self.schedule.time[i, None].expand_as(utiliz)
                     utiliz = torch.minimum(utiliz, cur_time)
-                    utiliz = utiliz.div((self.schedule.time[batch_id_seq_to_main] + 1e-9).unsqueeze(-1))
+                    utiliz = utiliz.div((self.schedule.time[i] + 1e-9).unsqueeze(-1))
 
-                    self.feature.feat_mas_batch[batch_id_seq_to_main, 2, :] = utiliz
+                    self.feature.feat_mas_batch[i, 2, :] = utiliz
                     # update env info d, r(no no no) && schedule info
-                    max_time = torch.max(self.feature.feat_opes_batch[batch_id_seq_to_main, 4, :])
-                    self.schedule.makespan_batch[batch_id_seq_to_main] = max_time
-
-                else:   # No job is stuck by Rule_4
-
+                    max_time = torch.max(self.feature.feat_opes_batch[i, 4, :])
+                    self.schedule.makespan_batch[i] = max_time
+                else:
                     # 只改变machine相关特征，不动job
-                    self.schedule.machines_batch[batch_id_seq_to_main, m_id, 1] += t  # fake proc time of Ope
+                    self.schedule.machines_batch[i, m_id, 1] += t  # fake proc time of Ope
 
                     # Update feature vectors of machines, available time & utiliz
-                    self.feature.feat_mas_batch[batch_id_seq_to_main, 1, m_id] = self.schedule.machines_batch[
-                        batch_id_seq_to_main, m_id, 1]
-                    utiliz = self.schedule.machines_batch[batch_id_seq_to_main, :, 2]
-                    cur_time = self.schedule.time[batch_id_seq_to_main, None].expand_as(utiliz)
+                    self.feature.feat_mas_batch[i, 1, m_id] = self.schedule.machines_batch[
+                        i, m_id, 1]
+                    utiliz = self.schedule.machines_batch[i, :, 2]
+                    cur_time = self.schedule.time[i, None].expand_as(utiliz)
                     utiliz = torch.minimum(utiliz, cur_time)
-                    utiliz = utiliz.div((self.schedule.time[batch_id_seq_to_main] + 1e-9).unsqueeze(-1))
-                    self.feature.feat_mas_batch[batch_id_seq_to_main, 2, :] = utiliz
+                    utiliz = utiliz.div((self.schedule.time[i] + 1e-9).unsqueeze(-1))
+                    self.feature.feat_mas_batch[i, 2, :] = utiliz
                     # update env info d, r(no no no) && schedule info
-                    max_time = torch.max(self.feature.feat_opes_batch[batch_id_seq_to_main, 4, :])
-                    self.schedule.makespan_batch[batch_id_seq_to_main] = max_time
+                    max_time = torch.max(self.feature.feat_opes_batch[i, 4, :])
+                    self.schedule.makespan_batch[i] = max_time
 
+                    # time move?
                     mask_finish = (self.schedule.N + 1) <= self.instance.nums_opes
                     if ~(mask_finish.all()):
                         self.schedule.batch_idxes = torch.arange(self.instance.batch_size)[
@@ -552,8 +555,6 @@ class MMBPEnv(gym.Env):
             bool_end = self.main_info.bool_whether_end(self.schedule.time)
             if bool_end.any():
                 bid, m_ids, t_end = self.main_info.e_need(bool_end)
-                m_ids = m_ids.long()
-                bid = bid.long()
                 self.mask.mask_maintenance_ma_batch[bid, m_ids] = False
                 self.schedule.stuck_job[bid, m_ids] = -1
                 self.schedule.stuck_time[bid, m_ids] = 0
@@ -564,7 +565,6 @@ class MMBPEnv(gym.Env):
         1 procing is not eli
         2 maintenance is not eli
         3 release date is not eli   # new part, conducting ##############
-
         """
         eli = self.cal_eli()
         flag_trans_2_next_time = torch.sum(eli.transpose(1, 2), dim=[1, 2])
@@ -618,7 +618,7 @@ class MMBPEnv(gym.Env):
                                                        job_already_release_out_time,
                                                        self.schedule.time[:, None] + 1e5)
             job_ava_time = torch.min(job_already_release_out_time, dim=1)[0]
-            j_min_avail_later = torch.min(job_min_release_later, job_ava_time)  # 统一到该值, 两者取小
+            j_min_avail_later = torch.min(job_min_release_later, job_ava_time)  # min of release time and out time
         else:
             # all jobs have been released
             j_next_all = torch.where(job_feat > self.schedule.time[:,None], job_feat, job_feat.max() + 1)
@@ -637,8 +637,7 @@ class MMBPEnv(gym.Env):
         m_min_avail_later = torch.min(m_avail_time_later, dim=1)[0]
 
         # The time for each batch to transit to or stay in
-        # 这里还需要考虑，用的job avail later其实是release later 而不是已经release的job可能空闲的时间
-        # 若m_min_avail_later 很大说明m全都释放
+        # Big m_min_avail_later -> release all
         target_time = torch.where(flag_need_trans, torch.min(j_min_avail_later, m_min_avail_later),
                                   self.schedule.time)
         if target_time[flag_need_trans].any() >=1e4:
@@ -663,12 +662,13 @@ class MMBPEnv(gym.Env):
                     self.schedule.machines_batch[:, :, 0] == 0) & flag_need_trans[:, None],
             True, False)
 
-        # 将时间重置到c得到的当前最小空闲时间——容易导致错误
-        self.schedule.time[flag_need_trans] = target_time[flag_need_trans]      # 重置时间，不要忘记加flag
+        # reset to min available time
+        self.schedule.time[flag_need_trans] = target_time[flag_need_trans]
         if self.if_rnd:
-            self.release_in_next_time_func() if ~self.mask.mask_job_release_batch.all() else None# release job ############## 改变mask
+            self.release_in_next_time_func() if ~self.mask.mask_job_release_batch.all() else None
+            # release job
 
-        # 以下是更新时间后需要进行的步骤
+        # After updating TIME
         # Update partial schedule (state), variables and feature vectors
         aa = self.schedule.machines_batch.transpose(1, 2)
         aa[m_idle_at_target_time_later, 0] = 1
@@ -680,17 +680,16 @@ class MMBPEnv(gym.Env):
         utiliz = utiliz.div(self.schedule.time[:, None] + 1e-5)
         self.feature.feat_mas_batch[:, 2, :] = utiliz
 
-        # jobs 可能有一个batch没有正数?
-        # 将已经执行完的job释放出来，m_b[3]: 正在执行的job_idx, m_idle: 空m_idx
+        # Finished job -> release
+        # m_b[3]: ongoing job_idx
         jobs = torch.where(m_idle_at_target_time_later, self.schedule.machines_batch[:, :, 3].double(), -1.0).float()
-        jobs_index = np.argwhere(jobs.cpu() >= 0)  # .to(self.device)  # size(batch_size, job_num) 目前空出来的job的坐标
-        job_idxes = jobs[jobs_index[0], jobs_index[1]].long()  # 从以上坐标拿出序号
+        jobs_index = np.argwhere(jobs.cpu() >= 0)  # .to(self.device)  # size(batch_size, job_num) available job index
+        job_idxes = jobs[jobs_index[0], jobs_index[1]].long()
         target_batch_idxes = jobs_index[0]
 
         if_finish = self.schedule.ope_step_batch == self.instance.end_ope_biases_batch + 1
         self.mask.update_with_time(target_batch_idxes, job_idxes, m_idle_at_target_time_later, if_finish,
                                    num_opes=self.instance.num_opes)
-        """#############只做了job相关没有管mas"""
 
         if self.main_info is not None:
             self.mask.update_with_maintenance_time(self.schedule.time, self.main_info.maintenance,
@@ -700,6 +699,7 @@ class MMBPEnv(gym.Env):
         '''
         Verify whether the schedule is feasible
         '''
+        valid_mask = torch.ones(self.instance.batch_size, dtype=torch.bool, device=self.device)
         ma_gantt_batch = [[[] for _ in range(self.instance.num_mas)] for __ in range(self.instance.batch_size)]
         for batch_id, schedules in enumerate(self.schedule.schedules_batch):
             for i in range(int(self.instance.nums_opes[batch_id])):
@@ -716,19 +716,26 @@ class MMBPEnv(gym.Env):
             proc_time = proc_time_batch[k]
             for i in range(self.instance.num_mas):
                 ma_gantt[i].sort(key=lambda s: s[1])
-                for j in range(len(ma_gantt[i])):  # j: 每个机器所作O的数量
+                for j in range(len(ma_gantt[i])):  # j: num ope on M
                     if (len(ma_gantt[i]) <= 1) or (j == len(ma_gantt[i]) - 1):
                         break
-                    if ma_gantt[i][j][2] > ma_gantt[i][j + 1][1]:  # 机器上某操作的完毕时间窗小于下一个开始
+                    if ma_gantt[i][j][2] > ma_gantt[i][j + 1][1]:  # Ope finish time > next Ope start time
                         flag_ma_overlap += 1
-                        print(f"Overlap:【machine{i}】【batch{k}】,"
+                        '''print(f"Overlap:【machine{i}】【batch{k}】,"
                               f"【ope{ma_gantt[i][j][0]}】 time {ma_gantt[i][j][1]}-{ma_gantt[i][j][2]} while"
-                              f"【ope{ma_gantt[i][j + 1][0]}】 start time {ma_gantt[i][j + 1][1]}-{ma_gantt[i][j + 1][2]}")
+                              f"【ope{ma_gantt[i][j + 1][0]}】 start time {ma_gantt[i][j + 1][1]}-{ma_gantt[i][j + 1][2]}")'''
+                        valid_mask[k] = False
                     if ma_gantt[i][j][2] - ma_gantt[i][j][1] != proc_time[ma_gantt[i][j][0]][i]:
-                        # flag_proc_time += 1
-                        '''print(f"Wrong: processing time on【machine{i}】during {ma_gantt[i][j][2]} to {ma_gantt[i][j][1]},"
-                              f"which should be {proc_time[ma_gantt[i][j][0]][i]}, 【batch{k}】【ope{ma_gantt[i][j][0]}】."
-                              f"maintenance caused?")'''
+                        xxx = ma_gantt[i][j][2] - ma_gantt[i][j][1] - proc_time[ma_gantt[i][j][0]][i]
+                        if xxx > 1e-2 or xxx < -1e-2:
+                            if self.main_info is not None:
+                                pass
+                            else:
+                                flag_proc_time += 1
+                                '''print(f"Wrong: processing time on【machine{i}】during {ma_gantt[i][j][1]} to {ma_gantt[i][j][2]},"
+                                      f"which should be {proc_time[ma_gantt[i][j][0]][i]}, 【batch{k}】【ope{ma_gantt[i][j][0]}】."
+                                      f"maintenance caused?")'''
+                                valid_mask[k] = False
                     flag += 1
 
         # Check job order and overlap
@@ -745,9 +752,9 @@ class MMBPEnv(gym.Env):
                     step_next = schedule[num_ope_biases[i] + j + 1]
                     if step[3] > step_next[2]:  # job got overlaps
                         flag_ope_overlap += 1
-                        print(f"Overlap:【job{i}】【ope{j}】【batch{k}】 whose time{step[2]}-{step[3]} and "
-                              f"{step_next[2]}-{step_next[3]}")
-                        # 因为mask_job 过早释放导致派新工作
+                        '''print(f"Overlap:【job{i}】【ope{j}】【batch{k}】 whose time{step[2]}-{step[3]} and "
+                              f"{step_next[2]}-{step_next[3]}")'''
+                        valid_mask[k] = False
         # Check whether there are unscheduled operations
         flag_unscheduled = 0
         for batch_id, schedules in enumerate(self.schedule.schedules_batch):
@@ -759,27 +766,34 @@ class MMBPEnv(gym.Env):
             flag_unscheduled += add
 
         if flag_ma_overlap + flag_ope_overlap + flag_proc_time + flag_unscheduled != 0:
-            return False, self.schedule.schedules_batch
+            return valid_mask, self.schedule.schedules_batch[valid_mask]
         else:
-            return True, self.schedule.schedules_batch
+            return valid_mask, self.schedule.schedules_batch[valid_mask]
 
 
 class maintenance_information():
-    def __init__(self, mt, batch_size):
-        # e.g. [[m_id, start, end], [m_id, start, end]]
+    def __init__(self, mt, batch_size, device='cpu'):
+        """
+        mt: maintenance settings, e.g. [[m_id, start, end], [m_id, start, end]]
+        batch_size: batch size of the environment
+        """
         if mt is not None:
             self.if_maintenance = True
         self.maintenance = mt
         self.count = len(mt)
+        self.device = device
         self.chart_main, self.start_t_main_sequel, self.end_t_main_sequel = self.df_maintenance(mt)
         self.start_t_main_sequel = self.start_t_main_sequel.expand(batch_size, self.count)
         self.end_t_main_sequel = self.end_t_main_sequel.expand(batch_size, self.count)
-        self.maintenance_plural = torch.tensor(self.maintenance).expand(batch_size, self.count, 3)
-        self.main_position = torch.zeros(size=(batch_size, 2), dtype=torch.long)
-        self.done_main = torch.zeros(size=(batch_size, 2), dtype=torch.bool)
-        self.batch_idx = torch.tensor([i for i in range(batch_size)])
+        self.maintenance_plural = torch.tensor(self.maintenance, device=self.device).expand(batch_size, self.count, 3)
+        self.main_position = torch.zeros(size=(batch_size, 2), dtype=torch.long, device=self.device)
+        self.done_main = torch.zeros(size=(batch_size, 2), dtype=torch.bool, device=self.device)
+        self.batch_idx = torch.tensor([i for i in range(batch_size)], device=self.device)
 
     def df_maintenance(self, mt):
+        """
+        dataframe version
+        """
         df = pd.DataFrame(mt, columns=['m_id', 'start', 'end'])
         for i in range(self.count):
             if df['start'][i] > df['end'][i]:
@@ -793,7 +807,7 @@ class maintenance_information():
         start_time_index = df.index.values
         df = df.sort_values(by=['end'])
         end_time_index = df.index.values
-        return df, torch.tensor(start_time_index), torch.tensor(end_time_index)
+        return df, torch.tensor(start_time_index, device=self.device), torch.tensor(end_time_index, device=self.device)
 
     def update_main_pos(self, bool_position):
         self.main_position[bool_position] += 1
@@ -848,35 +862,36 @@ class maintenance_information():
 
 
 if __name__ == "__main__":
+    # Input:
+    # instance: pij, release_and_due
     batch = 2
-    default_path = 'case_studyA.fjs'
-    rnd = './case_studyA.csv'
+    default_path = 'case_studyA.fjs'    # pij
+    rnd = './case_studyA.csv'           # release and due
 
-    device = "cuda"
-    env = MMBPEnv(device=device, batch=batch, ins_file=default_path, release_and_due=rnd, # relation_stage_unit=rsu,
+    # Environment:
+    device = "cpu"
+    env = MMBPEnv(device=device, batch=batch, ins_file=default_path, release_and_due=rnd,
                   render_mode='p_d', time_slot=1,
                   maintenance=[[10,4,6],[0,0.5,1.5]])
-    # print(env.instance.num_jobs)
     state = env.state
     dones = env.schedule.done_batch
     done = False  # Unfinished at the beginning
-    i = 0
-
-    # j = env.get_job_num(ope=10)
-
     last_time = time.time()
 
+    # Select model
     from MMBP.Heuristics import random_method
+
+    i = 0
     while ~done:
         i += 1
         eli = env.eli
         action = random_method(eli, ope_step_batch=env.state.ope_step_batch, batch_idxes=env.state.batch_idxes)
-        # print(action)
         state, rewards, dones, _, _ = env.step(action)
         done = dones.all()
-        env.render(changeable_mode='draw')
 
-    spend_time = time.time() - last_time  # The time taken to solve this environment (instance)
+    env.render(changeable_mode='draw')
+
+    spend_time = time.time() - last_time  # duration
     env.render(name='CASE_A')
     result_correct, _ = env.validate_gantt()
 
