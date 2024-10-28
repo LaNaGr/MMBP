@@ -35,7 +35,7 @@ def test_MMBPEnv_Heu(problem='case_studyB'):
     device = "cpu"
     default_path = './' + problem + '.fjs'
     env = MMBPEnv_Heu(path=default_path, batch=1, render_mode='p_d',
-                      device=device, maintenance=[[10, 4, 6], [3, 5, 25], [8, 20, 45]])
+                      device=device)
     from MMBP.Heuristics import Heuristic
     rule_list = ['MOPNR_EET', 'MOPNR_SPT', 'MWRM_EET', 'MWRM_SPT', 'LWRM_EET', 'LWRM_SPT', 'FIFO_EET', 'FIFO_SPT']
     record = []
@@ -53,7 +53,7 @@ def test_MMBPEnv_Heu(problem='case_studyB'):
                 env.time_move_to_t(torch.tensor([time_move]))
             state, rewards, dones, _, _ = env.step(action)
             done = dones.all()
-        env.render(name=[rule, rule+'dyn'])
+        env.render(name=[rule, 'static'])
         t_end = time.time()
         duration = t_end - t_start
         validation = env.validate_gantt()
@@ -77,7 +77,7 @@ def test_MMBPEnv_DRL(problem='case_studyB', batch=args.drl_batch_size):
     rnd = './' + problem + '.csv'
     env = MMBPEnv(device=device, batch=batch, ins_file=default_path, release_and_due=rnd,  # relation_stage_unit=rsu,
                   render_mode='p_d', time_slot=1,
-                  maintenance=[[10, 4, 6], [3, 5, 25], [8, 20, 45]])
+                  )
 
     ############################################## Loading Model ##############################################
     os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
@@ -131,7 +131,7 @@ def test_MMBPEnv_DRL(problem='case_studyB', batch=args.drl_batch_size):
     result_correct, schedule_batch = env.validate_gantt()
     min_makespan, idx_result_correct = env.schedule.makespan_batch[result_correct].min(0)  # not this index, but the index of result correct
     idx = torch.range(0,env.instance.batch_size-1)[result_correct][idx_result_correct].int()
-    env.render(name=['DRL','HGNN-DRL-dyn'], selected_batch=idx)
+    env.render(name=['RL','static'], selected_batch=idx)
     print("spend_time: %.2f" % spend_time, "result correct:", result_correct.any(), "makespan:", min_makespan.item())
 
 test_MMBPEnv_Heu(args.problem)

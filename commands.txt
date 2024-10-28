@@ -1,0 +1,3 @@
+commands:
+python main_caseB_static.py --drl_cuda 1 --seed 2 --drl_batch_size 100
+python main_caseB.py --drl_cuda 1 --seed 100 --drl_batch_size 100
