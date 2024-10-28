@@ -1,2 +1,3 @@
 # MMBP
-MMBP environment for DRL - unfinished, uploading
+MMBP environment 
+Heterogenous GNN + DRL
